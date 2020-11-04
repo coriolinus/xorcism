@@ -3,6 +3,8 @@ use std::iter::Cycle;
 use std::slice::Iter;
 
 /// A munger which XORs a key with some data
+///
+/// This is a low-level structure; more often, you'll want to use [`Writer`], [`Reader`], or [`munge`].
 #[derive(Clone)]
 pub struct Xorcism<'a> {
     key: Cycle<Iter<'a, u8>>,
@@ -26,6 +28,19 @@ impl<'a> Xorcism<'a> {
             .zip(self.key.by_ref())
             .map(|(d, k)| d.borrow() ^ k)
     }
+}
+
+/// XOR each byte of `key` with each byte of `data`, looping `key` as required.
+pub fn munge<Key, Data>(key: Key, data: Data) -> Vec<u8>
+where
+    Key: AsRef<[u8]>,
+    Data: AsRef<[u8]>,
+{
+    let key = key.as_ref();
+    let data = data.as_ref();
+
+    let mut xorcism = Xorcism::new(key);
+    xorcism.munge(data).collect()
 }
 
 #[cfg(test)]
