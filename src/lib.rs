@@ -1,4 +1,5 @@
 use std::borrow::Borrow;
+use std::io::{self, Write};
 use std::iter::Cycle;
 use std::slice::Iter;
 
@@ -28,6 +29,17 @@ impl<'a> Xorcism<'a> {
             .zip(self.key.by_ref())
             .map(|(d, k)| d.borrow() ^ k)
     }
+
+    /// Convert this into a [`Writer`]
+    pub fn writer<W>(self, writer: W) -> Writer<'a, W>
+    where
+        W: Write,
+    {
+        Writer {
+            xorcism: self,
+            writer,
+        }
+    }
 }
 
 /// XOR each byte of `key` with each byte of `data`, looping `key` as required.
@@ -41,6 +53,35 @@ where
 
     let mut xorcism = Xorcism::new(key);
     xorcism.munge(data).collect()
+}
+
+/// This implements `Write` and performs xor munging on the data stream.
+///
+/// It is constructed with [`Xorcism::writer`].
+///
+/// It does not perform any internal buffering.
+pub struct Writer<'a, W> {
+    xorcism: Xorcism<'a>,
+    writer: W,
+}
+
+impl<'a, W> Write for Writer<'a, W>
+where
+    W: Write,
+{
+    /// This implementation will block until the underlying writer
+    /// has written the entire input buffer.
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        let mut munged = Vec::with_capacity(buf.len());
+        munged.extend(self.xorcism.munge(buf));
+
+        self.writer.write_all(&munged)?;
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.writer.flush()
+    }
 }
 
 #[cfg(test)]
