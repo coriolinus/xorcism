@@ -1,5 +1,5 @@
 use std::borrow::Borrow;
-use std::io::{self, Write};
+use std::io::{self, Read, Write};
 
 /// A munger which XORs a key with some data
 ///
@@ -20,10 +20,30 @@ impl<'a> Xorcism<'a> {
         Xorcism { key, pos: 0 }
     }
 
+    /// Increase the stored pos by the specified amount, returning the old value.
     fn incr_pos(&mut self, by: usize) -> usize {
         let old_pos = self.pos;
         self.pos += by;
         old_pos
+    }
+
+    /// Produce the key iterator, offset by `pos`.
+    fn key<'b>(&mut self, pos: usize) -> impl 'b + Iterator<Item = u8>
+    where
+        'a: 'b,
+    {
+        self.key.iter().copied().cycle().skip(pos)
+    }
+
+    /// XOR each byte of the input buffer with a byte from the key.
+    ///
+    /// Note that this is stateful: repeated calls are likely to produce different results,
+    /// even with identical inputs.
+    pub fn munge_in_place(&mut self, data: &mut [u8]) {
+        let pos = self.incr_pos(data.len());
+        for (d, k) in data.iter_mut().zip(self.key(pos)) {
+            *d ^= k;
+        }
     }
 
     /// XOR each byte of the data with a byte from the key.
@@ -39,8 +59,7 @@ impl<'a> Xorcism<'a> {
     {
         let data = data.into_iter();
         let pos = self.incr_pos(data.len());
-        data.zip(self.key.iter().cycle().skip(pos))
-            .map(|(d, k)| d.borrow() ^ k)
+        data.zip(self.key(pos)).map(|(d, k)| d.borrow() ^ k)
     }
 
     /// Convert this into a [`Writer`]
@@ -51,6 +70,17 @@ impl<'a> Xorcism<'a> {
         Writer {
             xorcism: self,
             writer,
+        }
+    }
+
+    /// Convert this into a [`Reader`]
+    pub fn reader<R>(self, reader: R) -> Reader<'a, R>
+    where
+        R: Read,
+    {
+        Reader {
+            xorcism: self,
+            reader,
         }
     }
 }
@@ -71,8 +101,6 @@ where
 }
 
 /// This implements `Write` and performs xor munging on the data stream.
-///
-/// It is constructed with [`Xorcism::writer`].
 #[derive(Clone)]
 pub struct Writer<'a, W> {
     xorcism: Xorcism<'a>,
@@ -108,6 +136,39 @@ where
 
     fn flush(&mut self) -> io::Result<()> {
         self.writer.flush()
+    }
+}
+
+/// This implements `Read` and performs xor munging on the data stream.
+#[derive(Clone)]
+pub struct Reader<'a, R> {
+    xorcism: Xorcism<'a>,
+    reader: R,
+}
+
+impl<'a, R> Reader<'a, R>
+where
+    R: Read,
+{
+    pub fn new<Key>(key: &'a Key, reader: R) -> Reader<'a, R>
+    where
+        Key: AsRef<[u8]> + ?Sized,
+    {
+        Reader {
+            xorcism: Xorcism::new(key),
+            reader,
+        }
+    }
+}
+
+impl<'a, R> Read for Reader<'a, R>
+where
+    R: Read,
+{
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        let bytes_read = self.reader.read(buf)?;
+        self.xorcism.munge_in_place(&mut buf[..bytes_read]);
+        Ok(bytes_read)
     }
 }
 
@@ -164,5 +225,26 @@ mod tests {
 
         assert_eq!(writer_dest.len(), data.len());
         assert_ne!(writer_dest, data.as_bytes());
+    }
+
+    #[test]
+    fn reader_munges() {
+        let data = "The globe is text, its people prose; all the world's a page.";
+        let mut reader = Reader::new("But who owns the book?", data.as_bytes());
+        let mut buf = Vec::with_capacity(data.len());
+        let bytes_read = reader.read_to_end(&mut buf).unwrap();
+        assert_eq!(bytes_read, data.len());
+        assert_ne!(buf, data.as_bytes());
+    }
+
+    #[test]
+    fn reader_roundtrip() {
+        let data = "Mary Poppins was a kind witch. She cared for the children.";
+        let key = "supercalifragilisticexpialidocious.";
+        let mut reader = Reader::new(key, Reader::new(key, data.as_bytes()));
+        let mut buf = Vec::with_capacity(data.len());
+        let bytes_read = reader.read_to_end(&mut buf).unwrap();
+        assert_eq!(bytes_read, data.len());
+        assert_eq!(buf, data.as_bytes());
     }
 }
