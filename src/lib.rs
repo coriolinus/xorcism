@@ -4,6 +4,9 @@ use std::io::{self, Write};
 /// A munger which XORs a key with some data
 ///
 /// This is a low-level structure; more often, you'll want to use [`Writer`], [`Reader`], or [`munge`].
+///
+/// Note that this is stateful: repeated calls to `.munge` or `.munge_into` are likely to produce different results,
+/// even with identical inputs.
 #[derive(Clone)]
 pub struct Xorcism<'a> {
     key: &'a [u8],
@@ -39,6 +42,20 @@ impl<'a> Xorcism<'a> {
             .map(|(d, k)| d.borrow() ^ k)
     }
 
+    /// XOR each byte of the data with a byte from the key, collecting the results
+    pub fn munge_into<Data, B>(&mut self, data: Data) -> Vec<u8>
+    where
+        Data: IntoIterator<Item = B>,
+        <Data as IntoIterator>::IntoIter: ExactSizeIterator,
+        B: Borrow<u8>,
+    {
+        let data = data.into_iter();
+        let pos = self.incr_pos(data.len());
+        data.zip(self.key.iter().cycle().skip(pos))
+            .map(|(d, k)| d.borrow() ^ k)
+            .collect()
+    }
+
     /// Convert this into a [`Writer`]
     pub fn writer<W>(self, writer: W) -> Writer<'a, W>
     where
@@ -52,6 +69,8 @@ impl<'a> Xorcism<'a> {
 }
 
 /// XOR each byte of `key` with each byte of `data`, looping `key` as required.
+///
+/// This is stateless: repeated calls with identical inputs will always produce identical results.
 pub fn munge<Key, Data>(key: Key, data: Data) -> Vec<u8>
 where
     Key: AsRef<[u8]>,
@@ -61,7 +80,7 @@ where
     let data = data.as_ref();
 
     let mut xorcism = Xorcism::new(key);
-    xorcism.munge(data).collect()
+    xorcism.munge_into(data)
 }
 
 /// This implements `Write` and performs xor munging on the data stream.
@@ -81,27 +100,10 @@ where
 {
     /// This implementation will block until the underlying writer
     /// has written the entire input buffer.
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        let munged = {
-            let mut munged = Vec::with_capacity(buf.len());
-            // rustc can't figure out an appropriate lifetime if we use self.xorcism.munge,
-            // so let's work around the issue by reimplementing it. Luckily, it's fairly straightforward.
-            let pos = self.xorcism.incr_pos(buf.len());
-
-            munged.extend(
-                self.xorcism
-                    .key
-                    .iter()
-                    .cycle()
-                    .skip(pos)
-                    .zip(buf)
-                    .map(|(k, b)| k ^ b),
-            );
-            munged
-        };
-
+    fn write(&mut self, data: &[u8]) -> io::Result<usize> {
+        let munged = self.xorcism.munge_into(data);
         self.writer.write_all(&munged)?;
-        Ok(buf.len())
+        Ok(data.len())
     }
 
     fn flush(&mut self) -> io::Result<()> {
