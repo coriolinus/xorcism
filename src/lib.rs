@@ -4,6 +4,13 @@ use std::io::{self, Read, Write};
 /// A munger which XORs a key with some data
 ///
 /// This is a low-level structure; more often, you'll want to use [`Writer`], [`Reader`], or [`munge`].
+//
+// You might wonder: why implement this manually, instead of just storing `key: Cycle<Iter<'a, u8>>,`?
+//
+// If we do it like that, the lifetimes get kind of crazy. In particular, in `fn munge`, we want to do
+// `data.zip(self.key.by_ref())`, and that `by_ref()` thing really confuses the lifetime inferencer.
+// It ended up being simpler to just handle the key indexing manually than to figure out the correct
+// incantation to get that lifetime style to work.
 #[derive(Clone)]
 pub struct Xorcism<'a> {
     key: &'a [u8],
