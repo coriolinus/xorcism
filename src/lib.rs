@@ -12,7 +12,11 @@ pub struct Xorcism<'a> {
 
 impl<'a> Xorcism<'a> {
     /// Create a new Xorcism munger from a key
-    pub fn new(key: &'a [u8]) -> Xorcism<'a> {
+    pub fn new<Key>(key: &'a Key) -> Xorcism<'a>
+    where
+        Key: AsRef<[u8]> + ?Sized,
+    {
+        let key = key.as_ref();
         Xorcism { key, pos: 0 }
     }
 
@@ -122,7 +126,7 @@ mod tests {
 
     #[test]
     fn basic_round_trip() {
-        let mut xs = Xorcism::new("forsooth, let us never break our trust!".as_bytes());
+        let mut xs = Xorcism::new("forsooth, let us never break our trust!");
         let data = "the sacred brothership in which we share will never from our hearts be lost.";
 
         let mut xs2 = xs.clone();
@@ -137,7 +141,7 @@ mod tests {
         let data =
             "Spiderman! It's spiderman! Not a bird, or a plane, or a fireman! Just spiderman!";
         let mut writer_dest = Vec::new();
-        let xs1 = Xorcism::new("Who knows what evil lurks in the hearts of men?".as_bytes());
+        let xs1 = Xorcism::new("Who knows what evil lurks in the hearts of men?");
         let xs2 = xs1.clone();
         {
             let mut writer = xs1.writer(xs2.writer(&mut writer_dest));
@@ -152,8 +156,7 @@ mod tests {
         let data = "If wishes were horses, beggars would ride.";
         let mut writer_dest = Vec::new();
         {
-            let mut writer =
-                Xorcism::new("TRANSMUTATION_NOTES_1".as_bytes()).writer(&mut writer_dest);
+            let mut writer = Xorcism::new("TRANSMUTATION_NOTES_1").writer(&mut writer_dest);
             assert!(writer.write_all(data.as_bytes()).is_ok());
         }
 
