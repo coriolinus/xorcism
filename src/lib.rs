@@ -79,6 +79,21 @@ pub struct Writer<'a, W> {
     writer: W,
 }
 
+impl<'a, W> Writer<'a, W>
+where
+    W: Write,
+{
+    pub fn new<Key>(key: &'a Key, writer: W) -> Writer<'a, W>
+    where
+        Key: AsRef<[u8]> + ?Sized,
+    {
+        Writer {
+            xorcism: Xorcism::new(key),
+            writer,
+        }
+    }
+}
+
 impl<'a, W> Write for Writer<'a, W>
 where
     W: Write,
@@ -143,7 +158,7 @@ mod tests {
         let data = "If wishes were horses, beggars would ride.";
         let mut writer_dest = Vec::new();
         {
-            let mut writer = Xorcism::new("TRANSMUTATION_NOTES_1").writer(&mut writer_dest);
+            let mut writer = Writer::new("TRANSMUTATION_NOTES_1", &mut writer_dest);
             assert!(writer.write_all(data.as_bytes()).is_ok());
         }
 
