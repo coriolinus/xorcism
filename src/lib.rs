@@ -4,9 +4,6 @@ use std::io::{self, Write};
 /// A munger which XORs a key with some data
 ///
 /// This is a low-level structure; more often, you'll want to use [`Writer`], [`Reader`], or [`munge`].
-///
-/// Note that this is stateful: repeated calls to `.munge` or `.munge_into` are likely to produce different results,
-/// even with identical inputs.
 #[derive(Clone)]
 pub struct Xorcism<'a> {
     key: &'a [u8],
@@ -29,31 +26,21 @@ impl<'a> Xorcism<'a> {
         old_pos
     }
 
-    /// XOR each byte of the data with a byte from the key
-    pub fn munge<Data, B>(&'a mut self, data: Data) -> impl 'a + Iterator<Item = u8>
+    /// XOR each byte of the data with a byte from the key.
+    ///
+    /// Note that this is stateful: repeated calls are likely to produce different results,
+    /// even with identical inputs.
+    pub fn munge<'b, Data, B>(&mut self, data: Data) -> impl 'b + Iterator<Item = u8>
     where
-        Data: 'a + IntoIterator<Item = B>,
-        <Data as IntoIterator>::IntoIter: ExactSizeIterator,
-        B: Borrow<u8>,
-    {
-        let data = data.into_iter();
-        let pos = self.incr_pos(data.len());
-        data.zip(self.key.iter().cycle().skip(pos))
-            .map(|(d, k)| d.borrow() ^ k)
-    }
-
-    /// XOR each byte of the data with a byte from the key, collecting the results
-    pub fn munge_into<Data, B>(&mut self, data: Data) -> Vec<u8>
-    where
+        'a: 'b,
         Data: IntoIterator<Item = B>,
-        <Data as IntoIterator>::IntoIter: ExactSizeIterator,
+        <Data as IntoIterator>::IntoIter: 'b + ExactSizeIterator,
         B: Borrow<u8>,
     {
         let data = data.into_iter();
         let pos = self.incr_pos(data.len());
         data.zip(self.key.iter().cycle().skip(pos))
             .map(|(d, k)| d.borrow() ^ k)
-            .collect()
     }
 
     /// Convert this into a [`Writer`]
@@ -80,14 +67,12 @@ where
     let data = data.as_ref();
 
     let mut xorcism = Xorcism::new(key);
-    xorcism.munge_into(data)
+    xorcism.munge(data).collect()
 }
 
 /// This implements `Write` and performs xor munging on the data stream.
 ///
 /// It is constructed with [`Xorcism::writer`].
-///
-/// It does not perform any internal buffering.
 #[derive(Clone)]
 pub struct Writer<'a, W> {
     xorcism: Xorcism<'a>,
@@ -101,7 +86,7 @@ where
     /// This implementation will block until the underlying writer
     /// has written the entire input buffer.
     fn write(&mut self, data: &[u8]) -> io::Result<usize> {
-        let munged = self.xorcism.munge_into(data);
+        let munged: Vec<_> = self.xorcism.munge(data).collect();
         self.writer.write_all(&munged)?;
         Ok(data.len())
     }
